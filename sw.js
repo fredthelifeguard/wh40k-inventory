@@ -1,5 +1,5 @@
 // Offline support: serve the app shell from cache, refresh it in the background.
-const CACHE = 'wh40k-inventory-shell-v3';
+const CACHE = 'wh40k-inventory-shell-v4';
 const SHELL = [
   './', 'index.html', 'styles.css', 'app.js', 'catalog.js', 'config.js',
   'manifest.webmanifest', 'icon-180.png', 'icon-192.png', 'icon-512.png'

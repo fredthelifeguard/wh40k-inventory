@@ -13,6 +13,11 @@
   const ROLE_ORDER = ['Epic Heroes', 'Characters', 'Battleline', 'Infantry', 'Mounted', 'Beasts & Swarms',
     'Monsters', 'Vehicles', 'Transports', 'Aircraft', 'Fortifications', 'Other'];
   const SIDES = ['Imperium', 'Chaos', 'Xenos'];
+  const STORE_KINDS = [
+    { k: 'tote', label: 'Tote', eg: '2' },
+    { k: 'boxi', label: 'Boxi', eg: 'A' },
+    { k: 'other', label: 'Other', eg: 'sim room shelf' }
+  ];
 
   const DRIVE_FOLDER = 'WH40K Inventory';
   const DRIVE_FILE = 'wh40k-collection.json';
@@ -26,10 +31,18 @@
     armyScope: 'wh40k.armyScope'
   };
 
-  const unitIndex = new Map();   // "army/unit" -> { army, unit }
+  // Search form of a string: no accents, no apostrophes, every kind of hyphen or dash read as a space.
+  const fold = (s) => String(s == null ? '' : s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+    .replace(/['‘’ʼ`]/g, '').replace(/[\s\-­‐-―−]+/g, ' ').trim();
+
+  const unitIndex = new Map();   // "army/unit" -> { army, unit, f: search text }
   for (const army of CATALOG.armies) {
-    for (const unit of army.units) unitIndex.set(army.id + '/' + unit.id, { army, unit });
+    for (const unit of army.units) {
+      unitIndex.set(army.id + '/' + unit.id, { army, unit, f: fold([unit.n].concat(unit.aka || []).join(' / ')) });
+    }
   }
+  // Retired unit id -> the id that replaced it ("army/unit" keys), supplied by the catalogue.
+  const ALIASES = CATALOG.aliases || {};
 
   const $ = (sel, root = document) => root.querySelector(sel);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
@@ -80,7 +93,10 @@
     let saved = null;
     try { saved = await idb.get('state'); } catch (e) { /* fall through */ }
     if (!saved) { try { saved = JSON.parse(ls.get(LS.state) || 'null'); } catch (e) { saved = null; } }
-    if (saved && saved.units) state = normalizeState(saved);
+    if (saved && saved.units) {
+      state = normalizeState(saved);
+      if (migrateAliases(state)) saveLocalSoon();
+    }
   }
 
   let saveTimer = 0;
@@ -96,7 +112,24 @@
 
   // ------------------------------------------------------------- data model
   function blankEntry() {
-    return { c: { nib: 0, nos: 0, built: 0, painted: 0 }, d: 0, notes: '', photos: [], t: 0 };
+    return { c: { nib: 0, nos: 0, built: 0, painted: 0 }, d: 0, notes: '', photos: [], s: [], t: 0 };
+  }
+  // Storage entries: { k: container type, label: free text, n: models kept there (0 = not stated) }.
+  // Entries saved before storage existed have no "s" and load as an empty list.
+  function normalizeStorage(list) {
+    if (!Array.isArray(list)) return [];
+    return list.filter((x) => x && typeof x === 'object').slice(0, 20).map((x) => ({
+      k: STORE_KINDS.some((o) => o.k === x.k) ? x.k : 'other',
+      label: typeof x.label === 'string' ? x.label.slice(0, 80) : '',
+      n: clampInt(x.n)
+    }));
+  }
+  function storeName(s) {
+    const kind = STORE_KINDS.find((o) => o.k === s.k).label;
+    const label = s.label.trim().replace(/\s+/g, ' ');
+    if (!label) return kind;
+    if (fold(label).startsWith(fold(kind))) return label;        // typed in full, e.g. "Tote 2"
+    return s.k === 'other' ? 'Other: ' + label : kind + ' ' + label;
   }
   function normalizeEntry(e) {
     const out = blankEntry();
@@ -105,6 +138,7 @@
     out.d = Math.min(clampInt(e.d), totalOf(out));
     out.notes = typeof e.notes === 'string' ? e.notes : '';
     out.photos = Array.isArray(e.photos) ? e.photos.filter((p) => p && p.id) : [];
+    out.s = normalizeStorage(e.s);
     out.t = Number(e.t) || 0;
     return out;
   }
@@ -119,7 +153,35 @@
   }
   function totalOf(e) { return e ? e.c.nib + e.c.nos + e.c.built + e.c.painted : 0; }
   function entryFor(key) { return state.units[key] || blankEntry(); }
-  function hasContent(e) { return !!e && (totalOf(e) > 0 || e.notes.trim() !== '' || e.photos.length > 0); }
+  function hasContent(e) {
+    return !!e && (totalOf(e) > 0 || e.notes.trim() !== '' || e.photos.length > 0 || e.s.length > 0);
+  }
+
+  // Move anything saved under a retired unit id to the id that replaced it. The old id is left
+  // behind as an empty entry with a fresh timestamp, so a device still running an older copy of
+  // the app adopts the empty entry at its next sync instead of putting the counts back.
+  function migrateAliases(s) {
+    let changed = false;
+    for (const from of Object.keys(ALIASES)) {
+      const to = ALIASES[from];
+      const src = s.units[from];
+      if (!src || !hasContent(src) || !unitIndex.has(to)) continue;
+      const dst = normalizeEntry(s.units[to]);
+      for (const st of STAGES) dst.c[st.k] = clampInt(dst.c[st.k] + src.c[st.k]);
+      dst.d = Math.min(clampInt(dst.d + src.d), totalOf(dst));
+      dst.notes = [dst.notes, src.notes].filter((x) => x.trim()).join('\n');
+      dst.photos = dst.photos.concat(src.photos.filter((p) => !dst.photos.some((q) => q.id === p.id)));
+      dst.s = normalizeStorage(dst.s.concat(src.s));
+      const now = Date.now();
+      dst.t = now;
+      s.units[to] = dst;
+      s.units[from] = blankEntry();
+      s.units[from].t = now;
+      s.updatedAt = Math.max(s.updatedAt || 0, now);
+      changed = true;
+    }
+    return changed;
+  }
 
   function touch(key, entry) {
     entry.d = Math.min(entry.d, totalOf(entry));
@@ -282,11 +344,12 @@
       if (fileId) remote = await (await gfetch(`${API}/files/${fileId}?alt=media`)).json();
       // No awaits between reading `state` and replacing it, so edits made mid-sync are never lost.
       const { merged, localChanged, remoteStale } = mergeStates(state, remote);
+      const moved = migrateAliases(merged);
       state = merged;
       const body = new Blob([JSON.stringify(merged)], { type: 'application/json' });
-      if (localChanged) { await saveLocal(); render(); }
+      if (localChanged || moved) { await saveLocal(); render(); }
       if (!fileId) fileId = await uploadNew(DRIVE_FILE, folderId, body);
-      else if (remoteStale) {
+      else if (remoteStale || moved) {
         await gfetch(`${UPLOAD}/files/${fileId}?uploadType=media`, {
           method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body
         });
@@ -311,8 +374,18 @@
     const labels = {
       off: 'Local only', offline: 'Offline', auth: 'Connect Drive', syncing: 'Syncing…', ok: 'Synced', error: 'Sync error'
     };
+    const label = labels[s] || s;
+    let text = $('.pill-text', pill);
+    if (!text) {
+      pill.textContent = '';
+      text = pill.appendChild(document.createElement('span'));
+      text.className = 'pill-text';
+    }
     pill.dataset.state = s;
-    pill.textContent = labels[s] || s;
+    text.textContent = label;
+    // The text is hidden at phone widths, so the name has to live on the button itself.
+    pill.setAttribute('aria-label', 'Google Drive sync: ' + label);
+    pill.title = 'Google Drive sync: ' + label;
     if ($('#settingsDialog').open) renderSettings();
   }
 
@@ -454,6 +527,7 @@
     if (e) {
       for (const s of STAGES) if (e.c[s.k]) tags.push(`<span class="tag ${s.k}">${e.c[s.k]} ${s.label}</span>`);
       if (e.d) tags.push(`<span class="tag damaged">${e.d} damaged</span>`);
+      for (const s of e.s) tags.push(`<span class="tag store">${esc(storeName(s))}${s.n ? ' ×' + s.n : ''}</span>`);
       if (e.photos.length) tags.push(`<span class="tag extra">${e.photos.length} photo${e.photos.length === 1 ? '' : 's'}</span>`);
       if (e.notes.trim()) tags.push('<span class="tag extra">note</span>');
     }
@@ -467,10 +541,11 @@
   }
 
   function matchesFilters(key) {
-    const { unit } = unitIndex.get(key);
+    const { unit, f } = unitIndex.get(key);
     const e = state.units[key];
     if (ui.edition !== 'all' && !unit.e.includes(Number(ui.edition))) return false;
-    if (ui.search && !unit.n.toLowerCase().includes(ui.search.toLowerCase())) return false;
+    const q = fold(ui.search);
+    if (q && !f.includes(q) && !(e && e.s.some((s) => fold(storeName(s)).includes(q)))) return false;
     switch (ui.filter) {
       case 'owned': return totalOf(e) > 0;
       case 'unowned': return totalOf(e) === 0;
@@ -498,10 +573,43 @@
       value="${esc(ui.search)}" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="${esc(placeholder)}"></div>`;
   }
 
+  // Home screen "By storage": one list per container, then owned units with no storage set.
+  function storageHtml() {
+    const groups = new Map();   // folded container name -> { name, k, keys, models }
+    const loose = [];
+    for (const key of Object.keys(state.units)) {
+      if (!unitIndex.has(key)) continue;
+      const e = state.units[key];
+      if (!e.s.length) { if (totalOf(e) > 0) loose.push(key); continue; }
+      for (const s of e.s) {
+        const name = storeName(s);
+        const id = fold(name);
+        if (!groups.has(id)) groups.set(id, { name, k: s.k, keys: [], models: 0 });
+        const g = groups.get(id);
+        if (!g.keys.includes(key)) g.keys.push(key);
+        // No count given: if this is the unit's only storage entry, the whole unit is here.
+        g.models += s.n || (e.s.length === 1 ? totalOf(e) : 0);
+      }
+    }
+    const byName = (a, b) => unitName(a).localeCompare(unitName(b));
+    const kindPos = (k) => STORE_KINDS.findIndex((o) => o.k === k);
+    const list = [...groups.values()].sort((a, b) => kindPos(a.k) - kindPos(b.k) ||
+      a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+    const section = (title, keys, models) => `
+      <div class="role-title"><span>${esc(title)}</span><span>${keys.length} unit${keys.length === 1 ? '' : 's'}${models ? `, ${models} model${models === 1 ? '' : 's'}` : ''}</span></div>
+      <div class="unit-list">${keys.sort(byName).map((k) => unitRowHtml(k, true)).join('')}</div>`;
+    let html = list.map((g) => section(g.name, g.keys, g.models)).join('');
+    if (!html) html = '<p class="empty">No storage recorded yet. Open a unit and use "Add storage" to say where it is kept.</p>';
+    if (loose.length) html += section('No storage set', loose, 0);
+    return html;
+  }
+
   function renderHome() {
     const t = totals();
     let body = '';
-    if (ui.search.trim()) {
+    if (ui.armyScope === 'storage' && !ui.search.trim()) {
+      body = storageHtml();
+    } else if (ui.search.trim()) {
       const keys = [...unitIndex.keys()].filter(matchesFilters).slice(0, 150);
       body = keys.length
         ? `<div class="role-title"><span>Matching units</span><span>${keys.length}${keys.length === 150 ? '+' : ''}</span></div>
@@ -526,10 +634,11 @@
       }
       if (!body) body = '<p class="empty">Nothing recorded yet. Switch to "All armies" and tap an army to start.</p>';
     }
-    $('#view').innerHTML = summaryHtml(t, 'whole collection') + searchHtml('Search every unit…') + `
-      <div class="chips" role="group" aria-label="Army list">
+    $('#view').innerHTML = summaryHtml(t, 'whole collection') + searchHtml('Search units or storage…') + `
+      <div class="chips" role="group" aria-label="Home screen view">
         <button class="chip" type="button" data-act="scope" data-v="all" aria-pressed="${ui.armyScope === 'all'}">All armies</button>
         <button class="chip" type="button" data-act="scope" data-v="mine" aria-pressed="${ui.armyScope === 'mine'}">My armies</button>
+        <button class="chip" type="button" data-act="scope" data-v="storage" aria-pressed="${ui.armyScope === 'storage'}">By storage</button>
       </div>` + body;
   }
 
@@ -613,8 +722,22 @@
           <button type="button" data-act="inc" data-k="d" aria-label="One more damaged">+</button>
         </div>
       </div>
+      <h3>Storage</h3>
+      ${e.s.map((s, i) => `
+        <div class="store-row">
+          <select data-si="${i}" data-f="k" aria-label="Container type, storage ${i + 1}">
+            ${STORE_KINDS.map((o) => `<option value="${o.k}"${o.k === s.k ? ' selected' : ''}>${o.label}</option>`).join('')}
+          </select>
+          <input class="text-input" type="text" data-si="${i}" data-f="label" value="${esc(s.label)}" maxlength="80"
+            placeholder="Label, e.g. ${esc(STORE_KINDS.find((o) => o.k === s.k).eg)}" autocomplete="off" aria-label="Container label, storage ${i + 1}">
+          <input class="text-input store-n" type="number" inputmode="numeric" min="0" max="9999" data-si="${i}" data-f="n"
+            value="${s.n || ''}" placeholder="all" aria-label="Models kept here (optional), storage ${i + 1}">
+          <button class="store-del" type="button" data-act="store-del" data-si="${i}" aria-label="Remove storage ${i + 1}">×</button>
+        </div>`).join('')}
+      <button class="btn" type="button" data-act="store-add">Add storage</button>
+      <p class="hint">Add one entry per container. The model count is optional; use it when a unit is split, e.g. sprues in a tote and built models in a Boxi.</p>
       <h3>Notes</h3>
-      <textarea id="notes" placeholder="Loadouts, paint scheme, where it is stored…">${esc(e.notes)}</textarea>
+      <textarea id="notes" placeholder="Loadouts, paint scheme…">${esc(e.notes)}</textarea>
       <h3>Photos</h3>
       <div class="photos">
         ${e.photos.map((p) => `<button class="photo" type="button" data-act="photo" data-id="${esc(p.id)}"><img alt="Photo of ${esc(unit.n)}" src="${esc(p.thumb)}"></button>`).join('')}
@@ -636,6 +759,12 @@
     else entry.c[k] = clampInt(fn(entry.c[k]));
     touch(currentKey, entry);
     renderUnitDialog();
+  }
+
+  function changeStorage(fn) {
+    const entry = normalizeEntry(state.units[currentKey]);
+    fn(entry.s);
+    touch(currentKey, entry);
   }
 
   // ---------------------------------------------------------------- settings
@@ -777,13 +906,38 @@
           renderUnitDialog();
         }
       } else if (act === 'photo') openPhoto(currentKey, el.dataset.id);
+      else if (act === 'store-add') {
+        changeStorage((list) => { if (list.length < 20) list.push({ k: 'tote', label: '', n: 0 }); });
+        renderUnitDialog();
+        const labels = unitDlg.querySelectorAll('input[data-f="label"]');
+        if (labels.length) labels[labels.length - 1].focus();
+      } else if (act === 'store-del') {
+        changeStorage((list) => { list.splice(Number(el.dataset.si), 1); });
+        renderUnitDialog();
+      }
     });
     unitDlg.addEventListener('change', (ev) => {
       const t = ev.target;
       if (t.id === 'photoInput') { const files = [...t.files]; t.value = ''; addPhotos(currentKey, files); }
-      else if (t.matches('input[type="number"]')) changeCount(t.dataset.k, () => t.value);
+      else if (t.dataset.si !== undefined) {
+        const i = Number(t.dataset.si);
+        const f = t.dataset.f;
+        changeStorage((list) => {
+          if (!list[i]) return;
+          if (f === 'k') list[i].k = t.value;
+          else if (f === 'n') list[i].n = clampInt(t.value);
+          else list[i].label = t.value.slice(0, 80);
+        });
+        if (f === 'k') renderUnitDialog();   // the label hint depends on the container type
+      } else if (t.matches('input[type="number"]')) changeCount(t.dataset.k, () => t.value);
     });
     unitDlg.addEventListener('input', (ev) => {
+      const t = ev.target;
+      if (t.dataset.si !== undefined && t.dataset.f === 'label') {
+        const i = Number(t.dataset.si);
+        changeStorage((list) => { if (list[i]) list[i].label = t.value.slice(0, 80); });
+        return;
+      }
       if (ev.target.id !== 'notes') return;
       const entry = normalizeEntry(state.units[currentKey]);
       entry.notes = ev.target.value;
