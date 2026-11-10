@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>40K Inventory</title>
+  <meta name="description" content="Personal Warhammer 40,000 collection inventory">
+  <meta name="theme-color" content="#14161a">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="40K Inventory">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/icon-180.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <button id="backBtn" class="icon-btn" aria-label="Back to armies" hidden>&#8249;</button>
+    <h1 id="title">40K Inventory</h1>
+    <button id="syncPill" class="pill" type="button" title="Google Drive sync status">Local only</button>
+    <button id="settingsBtn" class="icon-btn" aria-label="Settings">&#9881;</button>
+  </header>
+
+  <main id="view" aria-live="polite"></main>
+
+  <dialog id="unitDialog" class="sheet" aria-labelledby="unitTitle"></dialog>
+  <dialog id="settingsDialog" class="sheet" aria-labelledby="settingsTitle"></dialog>
+  <dialog id="photoDialog" class="photo-viewer" aria-label="Photo"></dialog>
+  <div id="toast" class="toast" role="status" hidden></div>
+
+  <script src="config.js"></script>
+  <script src="catalog.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
