@@ -435,8 +435,8 @@
     return `
       <section class="summary">
         <div class="summary-head">
-          <div class="summary-total">${t.total} <small>models in ${t.units} unit${t.units === 1 ? '' : 's'}${label ? ' · ' + esc(label) : ''}</small></div>
-          <div class="kv">${pct}% painted</div>
+          <div class="summary-total">${t.total}<small>model${t.total === 1 ? '' : 's'} in ${t.units} unit${t.units === 1 ? '' : 's'}${label ? ', ' + esc(label) : ''}</small></div>
+          <div class="summary-pct">${pct}% painted</div>
         </div>
         ${barHtml(t, false)}
         <div class="legend">
@@ -457,7 +457,7 @@
       if (e.photos.length) tags.push(`<span class="tag extra">${e.photos.length} photo${e.photos.length === 1 ? '' : 's'}</span>`);
       if (e.notes.trim()) tags.push('<span class="tag extra">note</span>');
     }
-    const sub = [showArmy ? army.name : '', unit.g || ''].filter(Boolean).join(' · ');
+    const sub = [showArmy ? army.name : '', unit.g || ''].filter(Boolean).join(', ');
     return `
       <button class="unit${n ? ' owned' : ''}" type="button" data-act="unit" data-key="${esc(key)}">
         <span class="unit-name">${esc(unit.n)}${unit.e.map((x) => `<span class="ed">${x}th</span>`).join('')}
@@ -519,7 +519,7 @@
           return `
             <button class="army" type="button" data-act="army" data-id="${a.id}">
               <span class="army-name"><span>${esc(a.name)}</span><span class="count">${at.total || ''}</span></span>
-              <span class="army-meta">${a.units.length} units${at.units ? ` · ${at.units} owned` : ''}</span>
+              <span class="army-meta">${at.units ? `${at.units} of ${a.units.length} units owned` : `${a.units.length} units`}</span>
               ${barHtml(at, true)}
             </button>`;
         }).join('') + '</div>';
@@ -583,7 +583,7 @@
     const e = entryFor(key);
     const n = totalOf(e);
     const keepNotes = document.activeElement && document.activeElement.id === 'notes';
-    const sizes = unit.m && unit.m.length ? `Unit size ${unit.m.join(' / ')} · ` : '';
+    const sizes = unit.m && unit.m.length ? ` Fielded in units of ${unit.m.join(' or ')}.` : '';
     const rows = STAGES.map((s, i) => {
       const next = STAGES[i + 1];
       return `
@@ -594,7 +594,7 @@
             <input type="number" inputmode="numeric" min="0" max="9999" data-k="${s.k}" value="${e.c[s.k]}" aria-label="${s.label} count">
             <button type="button" data-act="inc" data-k="${s.k}" aria-label="One more ${s.label}">+</button>
           </div>
-          ${next ? `<button class="advance" type="button" data-act="advance" data-k="${s.k}" ${e.c[s.k] ? '' : 'disabled'}>Move 1 to ${next.label} ›</button>` : ''}
+          ${next ? `<button class="advance" type="button" data-act="advance" data-k="${s.k}" ${e.c[s.k] ? '' : 'disabled'}>Move 1 to ${next.label}</button>` : ''}
         </div>`;
     }).join('');
     const html = `
@@ -602,8 +602,8 @@
         <h2 id="unitTitle">${esc(unit.n)}</h2>
         <button class="btn" type="button" data-act="close">Done</button>
       </div>
-      <div class="sheet-sub">${esc(army.name)}${unit.g ? ' · ' + esc(unit.g) : ''} · ${sizes}${unit.e.map((x) => x + 'th').join(' & ')} edition ·
-        <b>${n}</b> model${n === 1 ? '' : 's'} owned</div>
+      <div class="sheet-sub">${esc(army.name)}${unit.g ? ', ' + esc(unit.g) : ''}, ${unit.e.map((x) => x + 'th').join(' and ')} edition.${sizes}
+        <b>${n} owned.</b></div>
       ${rows}
       <div class="stage">
         <div class="stage-label"><i class="dot damaged"></i>Damaged<span class="stage-long">Needs repair (of ${n})</span></div>
