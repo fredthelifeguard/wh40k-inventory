@@ -20,8 +20,7 @@ Then open <http://localhost:8040/>. Without Google Drive set up, data is saved i
 ### 1. Put the app online (GitHub Pages, free)
 
 1. Sign in at <https://github.com> and create a new **public** repository called `wh40k-inventory`.
-2. On the repository page choose **Add file > Upload files**, drag in everything inside this folder
-   (including the `icons` and `tools` folders), and commit.
+2. On the repository page choose **Add file > Upload files**, drag in everything inside this folder and commit.
 3. Go to **Settings > Pages**, set **Source** to "Deploy from a branch", branch `main`, folder `/ (root)`, and save.
 4. After a minute the app is live at `https://YOUR-USERNAME.github.io/wh40k-inventory/`.
 
